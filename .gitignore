@@ -1,0 +1,7 @@
+backend/venv/
+backend/__pycache__/
+backend/orderflow.db
+*.pyc
+
+.env
+*.env

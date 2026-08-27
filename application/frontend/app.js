@@ -172,10 +172,23 @@ async function registerUser(form){
   }
 }
 function logoutUser(){
-  state.currentUser = null;
-  safeRemove('orderflow_token');
-  state.cache = {};
-  go('home');
+    // Clear authenticated user
+    state.currentUser = null;
+
+    // Remove authentication token
+    safeRemove('orderflow_token');
+
+    // Clear user-specific application data
+    state.cart = [];
+
+    // Clear cached authenticated data
+    state.cache = {};
+
+    // Clear checkout form data
+    state._checkoutForm = null;
+
+    // Return to home
+    go('home');
 }
 
 /* ---------- Orders (server-backed) ---------- */

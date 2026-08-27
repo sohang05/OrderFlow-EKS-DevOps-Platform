@@ -1,0 +1,58 @@
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: orderflow-postgres
+
+    environment:
+      POSTGRES_DB: orderflow
+      POSTGRES_USER: orderflow_user
+      POSTGRES_PASSWORD: orderflow_dev_password
+
+    volumes:
+      - orderflow-postgres-data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orderflow_user -d orderflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./application/backend
+      dockerfile: Dockerfile
+    
+    container_name: orderflow-backend
+
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: orderflow
+      DB_USER: orderflow_user
+      DB_PASSWORD: orderflow_dev_password
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+    
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./application/frontend
+      dockerfile: Dockerfile
+
+    container_name: orderflow-frontend
+
+    ports:
+      - "80:80"
+
+    depends_on:
+      - backend
+
+    restart: unless-stopped
+
+
+volumes:
+  orderflow-postgres-data:

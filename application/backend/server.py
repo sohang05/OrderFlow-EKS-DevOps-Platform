@@ -1,11 +1,10 @@
 """
-server.py — OrderFlow backend.
+server.py — OrderFlow backend (PostgreSQL Version).
 
-A REST API + static file server built entirely on Python's standard library
-(http.server), plus SQLite for storage and PyJWT for signed session tokens.
+A REST API + static file server built on Python's standard library (http.server),
+PostgreSQL database adapter, and PyJWT for signed session tokens.
 
 Run with:  python3 server.py [port]
-Then open the printed URL in your browser.
 """
 import json
 import os
@@ -48,7 +47,7 @@ def row_to_user(row, include_email=True):
 def row_to_product(row):
     return {
         "id": row["id"], "name": row["name"], "category": row["category"],
-        "price": row["price"], "image": row["image"], "stock": row["stock"], "sku": row["sku"],
+        "price": float(row["price"]), "image": row["image"], "stock": row["stock"], "sku": row["sku"],
     }
 
 
@@ -60,7 +59,7 @@ def row_to_order(row, items=None):
     d = {
         "id": row["order_number"], "date": row["created_at"][:10], "customer": row["customer_name"],
         "email": row["customer_email"], "address": row["address"], "city": row["city"],
-        "status": row["status"], "total": row["total"], "userId": row["user_id"],
+        "status": row["status"], "total": float(row["total"]), "userId": row["user_id"],
     }
     if items is not None:
         d["items"] = items
@@ -105,7 +104,11 @@ class Handler(BaseHTTPRequestHandler):
             if required:
                 raise ApiError(401, "Your session has expired. Please log in again.")
             return None
-        row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE id=%s;", (user_id,))
+            row = cur.fetchone()
+
         if row is None or row["disabled"]:
             if required:
                 raise ApiError(401, "Account not found or disabled.")
@@ -160,95 +163,107 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(500, {"detail": "Internal server error."})
 
     def dispatch_api(self, method, path, query, conn):
-        # ----- auth -----
-        if method == "POST" and path == "/api/auth/register":
-            return self.api_register(conn)
-        if method == "POST" and path == "/api/auth/login":
-            return self.api_login(conn)
-        if method == "GET" and path == "/api/auth/me":
-            user = self.current_user_row(conn)
-            return {"user": row_to_user(user)}
+        with conn.cursor() as cur:
+            # ----- auth -----
+            if method == "POST" and path == "/api/auth/register":
+                return self.api_register(conn)
+            if method == "POST" and path == "/api/auth/login":
+                return self.api_login(conn)
+            if method == "GET" and path == "/api/auth/me":
+                user = self.current_user_row(conn)
+                return {"user": row_to_user(user)}
 
-        # ----- public catalog -----
-        if method == "GET" and path == "/api/products":
-            rows = conn.execute("SELECT * FROM products ORDER BY id").fetchall()
-            return {"products": [row_to_product(r) for r in rows]}
-        m = re.match(r"^/api/products/(\d+)$", path)
-        if method == "GET" and m:
-            row = conn.execute("SELECT * FROM products WHERE id=?", (int(m.group(1)),)).fetchone()
-            if not row:
-                raise ApiError(404, "Product not found.")
-            return {"product": row_to_product(row)}
-        if method == "GET" and path == "/api/categories":
-            rows = conn.execute("SELECT * FROM categories ORDER BY id").fetchall()
-            return {"categories": [row_to_category(r) for r in rows]}
+            # ----- public catalog -----
+            if method == "GET" and path == "/api/products":
+                cur.execute("SELECT * FROM products ORDER BY id;")
+                rows = cur.fetchall()
+                return {"products": [row_to_product(r) for r in rows]}
 
-        # ----- customer orders -----
-        if method == "POST" and path == "/api/orders":
-            return self.api_create_order(conn)
-        if method == "GET" and path == "/api/orders":
-            user = self.current_user_row(conn)
-            rows = conn.execute("SELECT * FROM orders WHERE user_id=? ORDER BY id DESC", (user["id"],)).fetchall()
-            return {"orders": [row_to_order(r) for r in rows]}
-        m = re.match(r"^/api/orders/([\w-]+)$", path)
-        if method == "GET" and m:
-            user = self.current_user_row(conn)
-            order = conn.execute("SELECT * FROM orders WHERE order_number=?", (m.group(1),)).fetchone()
-            if not order:
-                raise ApiError(404, "Order not found.")
-            if order["user_id"] != user["id"] and user["role"] != "admin":
-                raise ApiError(403, "You don't have access to this order.")
-            items = conn.execute("SELECT * FROM order_items WHERE order_id=?", (order["id"],)).fetchall()
-            item_list = [{"id": i["product_id"], "name": i["name"], "price": i["price"], "image": i["image"], "qty": i["qty"]} for i in items]
-            return {"order": row_to_order(order, item_list)}
+            m = re.match(r"^/api/products/(\d+)$", path)
+            if method == "GET" and m:
+                cur.execute("SELECT * FROM products WHERE id=%s;", (int(m.group(1)),))
+                row = cur.fetchone()
+                if not row:
+                    raise ApiError(404, "Product not found.")
+                return {"product": row_to_product(row)}
 
-        # ----- admin product/category management -----
-        if method == "POST" and path == "/api/admin/products":
-            self.current_user_row(conn, admin_only=True)
-            return self.api_create_product(conn)
-        m = re.match(r"^/api/admin/products/(\d+)$", path)
-        if method == "PATCH" and m:
-            self.current_user_row(conn, admin_only=True)
-            return self.api_update_product(conn, int(m.group(1)))
-        if method == "PUT" and m:
-            self.current_user_row(conn, admin_only=True)
-            return self.api_update_product(conn, int(m.group(1)))
-        if method == "DELETE" and m:
-            self.current_user_row(conn, admin_only=True)
-            return self.api_delete_product(conn, int(m.group(1)))
+            if method == "GET" and path == "/api/categories":
+                cur.execute("SELECT * FROM categories ORDER BY id;")
+                rows = cur.fetchall()
+                return {"categories": [row_to_category(r) for r in rows]}
 
-        if method == "POST" and path == "/api/admin/categories":
-            self.current_user_row(conn, admin_only=True)
-            return self.api_create_category(conn)
-        m = re.match(r"^/api/admin/categories/(\d+)$", path)
-        if method == "PATCH" and m:
-            self.current_user_row(conn, admin_only=True)
-            return self.api_update_category(conn, int(m.group(1)))
-        if method == "PUT" and m:
-            self.current_user_row(conn, admin_only=True)
-            return self.api_update_category(conn, int(m.group(1)))
-        if method == "DELETE" and m:
-            self.current_user_row(conn, admin_only=True)
-            return self.api_delete_category(conn, int(m.group(1)))
+            # ----- customer orders -----
+            if method == "POST" and path == "/api/orders":
+                return self.api_create_order(conn)
+            if method == "GET" and path == "/api/orders":
+                user = self.current_user_row(conn)
+                cur.execute("SELECT * FROM orders WHERE user_id=%s ORDER BY id DESC;", (user["id"],))
+                rows = cur.fetchall()
+                return {"orders": [row_to_order(r) for r in rows]}
 
-        if method == "GET" and path == "/api/admin/orders":
-            self.current_user_row(conn, admin_only=True)
-            rows = conn.execute("SELECT * FROM orders ORDER BY id DESC").fetchall()
-            return {"orders": [row_to_order(r) for r in rows]}
-        m = re.match(r"^/api/admin/orders/([\w-]+)/status$", path)
-        if method == "PATCH" and m:
-            self.current_user_row(conn, admin_only=True)
-            return self.api_set_order_status(conn, m.group(1))
-        if method == "GET" and path == "/api/admin/users":
-            self.current_user_row(conn, admin_only=True)
-            rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
-            return {"users": [row_to_user(r) for r in rows]}
-        m = re.match(r"^/api/admin/users/(\d+)/toggle-disabled$", path)
-        if method == "PATCH" and m:
-            self.current_user_row(conn, admin_only=True)
-            return self.api_toggle_user(conn, int(m.group(1)))
+            m = re.match(r"^/api/orders/([\w-]+)$", path)
+            if method == "GET" and m:
+                user = self.current_user_row(conn)
+                cur.execute("SELECT * FROM orders WHERE order_number=%s;", (m.group(1),))
+                order = cur.fetchone()
+                if not order:
+                    raise ApiError(404, "Order not found.")
+                if order["user_id"] != user["id"] and user["role"] != "admin":
+                    raise ApiError(403, "You don't have access to this order.")
+                cur.execute("SELECT * FROM order_items WHERE order_id=%s;", (order["id"],))
+                items = cur.fetchall()
+                item_list = [{"id": i["product_id"], "name": i["name"], "price": float(i["price"]), "image": i["image"], "qty": i["qty"]} for i in items]
+                return {"order": row_to_order(order, item_list)}
 
-        raise ApiError(404, "Not found.")
+            # ----- admin product/category management -----
+            if method == "POST" and path == "/api/admin/products":
+                self.current_user_row(conn, admin_only=True)
+                return self.api_create_product(conn)
+            m = re.match(r"^/api/admin/products/(\d+)$", path)
+            if method == "PATCH" and m:
+                self.current_user_row(conn, admin_only=True)
+                return self.api_update_product(conn, int(m.group(1)))
+            if method == "PUT" and m:
+                self.current_user_row(conn, admin_only=True)
+                return self.api_update_product(conn, int(m.group(1)))
+            if method == "DELETE" and m:
+                self.current_user_row(conn, admin_only=True)
+                return self.api_delete_product(conn, int(m.group(1)))
+
+            if method == "POST" and path == "/api/admin/categories":
+                self.current_user_row(conn, admin_only=True)
+                return self.api_create_category(conn)
+            m = re.match(r"^/api/admin/categories/(\d+)$", path)
+            if method == "PATCH" and m:
+                self.current_user_row(conn, admin_only=True)
+                return self.api_update_category(conn, int(m.group(1)))
+            if method == "PUT" and m:
+                self.current_user_row(conn, admin_only=True)
+                return self.api_update_category(conn, int(m.group(1)))
+            if method == "DELETE" and m:
+                self.current_user_row(conn, admin_only=True)
+                return self.api_delete_category(conn, int(m.group(1)))
+
+            if method == "GET" and path == "/api/admin/orders":
+                self.current_user_row(conn, admin_only=True)
+                cur.execute("SELECT * FROM orders ORDER BY id DESC;")
+                rows = cur.fetchall()
+                return {"orders": [row_to_order(r) for r in rows]}
+            m = re.match(r"^/api/admin/orders/([\w-]+)/status$", path)
+            if method == "PATCH" and m:
+                self.current_user_row(conn, admin_only=True)
+                return self.api_set_order_status(conn, m.group(1))
+            if method == "GET" and path == "/api/admin/users":
+                self.current_user_row(conn, admin_only=True)
+                cur.execute("SELECT * FROM users ORDER BY id;")
+                rows = cur.fetchall()
+                return {"users": [row_to_user(r) for r in rows]}
+            m = re.match(r"^/api/admin/users/(\d+)/toggle-disabled$", path)
+            if method == "PATCH" and m:
+                self.current_user_row(conn, admin_only=True)
+                return self.api_toggle_user(conn, int(m.group(1)))
+
+            raise ApiError(404, "Not found.")
 
     # ---------- handlers ----------
     def api_register(self, conn):
@@ -262,24 +277,29 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "Password must be at least 6 characters.")
         if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
             raise ApiError(400, "Please enter a valid email address.")
-        existing = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
-        if existing:
-            raise ApiError(409, "An account with that email already exists.")
-        now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO users (name, email, password_hash, role, disabled, created_at) VALUES (?,?,?,?,0,?)",
-            (name, email, hash_password(password), "customer", now),
-        )
-        user_id = cur.lastrowid
-        row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE email=%s;", (email,))
+            if cur.fetchone():
+                raise ApiError(409, "An account with that email already exists.")
+            now = time.strftime("%Y-%m-%dT%H:%M:%S")
+            cur.execute(
+                "INSERT INTO users (name, email, password_hash, role, disabled, created_at) "
+                "VALUES (%s, %s, %s, %s, 0, %s) RETURNING id;",
+                (name, email, hash_password(password), "customer", now),
+            )
+            user_id = cur.fetchone()["id"]
+            cur.execute("SELECT * FROM users WHERE id=%s;", (user_id,))
+            row = cur.fetchone()
         return {"token": create_token(user_id), "user": row_to_user(row)}
 
     def api_login(self, conn):
         body = self.read_json_body()
         email = (body.get("email") or "").strip().lower()
         password = body.get("password") or ""
-        row = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE email=%s;", (email,))
+            row = cur.fetchone()
         if not row:
             raise ApiError(401, "No account found with that email.")
         if row["disabled"]:
@@ -291,9 +311,12 @@ class Handler(BaseHTTPRequestHandler):
     def api_create_order(self, conn):
         user = self.current_user_row(conn)
         body = self.read_json_body()
+
         items = body.get("items") or []
+
         if not items:
             raise ApiError(400, "Your cart is empty.")
+
         name = (body.get("name") or user["name"]).strip()
         email = (body.get("email") or user["email"]).strip()
         address = (body.get("address") or "").strip()
@@ -301,42 +324,159 @@ class Handler(BaseHTTPRequestHandler):
 
         resolved = []
         total = 0.0
-        for it in items:
-            pid = it.get("id")
-            qty = int(it.get("qty") or 1)
-            if qty < 1:
-                continue
-            prod = conn.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
-            if not prod:
-                raise ApiError(400, f"Product {pid} no longer exists.")
-            if prod["stock"] < qty:
-                raise ApiError(400, f"Only {prod['stock']} unit(s) of {prod['name']} are available.")
-            resolved.append((prod["id"], prod["name"], prod["price"], prod["image"], qty))
-            total += prod["price"] * qty
 
-        if not resolved:
-            raise ApiError(400, "Your cart is empty.")
+        with conn.cursor() as cur:
 
-        cur = conn.cursor()
-        seq_row = cur.execute("SELECT COUNT(*) AS n FROM orders").fetchone()
-        order_number = f"ORD-{8842 + seq_row['n']}"
-        now = time.strftime("%Y-%m-%dT%H:%M:%S")
-        cur.execute(
-            "INSERT INTO orders (order_number, user_id, customer_name, customer_email, address, city, status, total, created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            (order_number, user["id"], name, email, address, city, "pending", total, now),
-        )
-        order_id = cur.lastrowid
-        for pid, pname, price, image, qty in resolved:
+            # -------------------------------------------------
+            # Validate cart items against the database
+            # -------------------------------------------------
+            for it in items:
+                pid = it.get("id")
+                qty = int(it.get("qty") or 1)
+
+                if qty < 1:
+                    continue
+
+                cur.execute(
+                    "SELECT * FROM products WHERE id=%s;",
+                    (pid,)
+                )
+
+                prod = cur.fetchone()
+
+                if not prod:
+                    raise ApiError(
+                        400,
+                        f"Product {pid} no longer exists."
+                    )
+
+                if prod["stock"] < qty:
+                    raise ApiError(
+                        400,
+                        f"Only {prod['stock']} unit(s) of "
+                        f"{prod['name']} are available."
+                    )
+
+                price = float(prod["price"])
+
+                resolved.append(
+                    (
+                        prod["id"],
+                        prod["name"],
+                        price,
+                        prod["image"],
+                        qty
+                    )
+                )
+
+                total += price * qty
+
+            if not resolved:
+                raise ApiError(400, "Your cart is empty.")
+
+        # -------------------------------------------------
+        # Generate order number BEFORE inserting
+        # -------------------------------------------------
+        #
+        # We use the next order ID from PostgreSQL's
+        # sequence so the order number is guaranteed to
+        # be generated before the INSERT.
+        #
             cur.execute(
-                "INSERT INTO order_items (order_id, product_id, name, price, image, qty) VALUES (?,?,?,?,?,?)",
-                (order_id, pid, pname, price, image, qty),
+                """
+                SELECT nextval(
+                    pg_get_serial_sequence('orders', 'id')
+                ) AS next_id;
+                """
             )
-            cur.execute("UPDATE products SET stock=stock-? WHERE id=?", (qty, pid))
-        self.refresh_category_counts(conn)
-        order_row = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
-        item_list = [{"id": pid, "name": n, "price": p, "image": img, "qty": q} for pid, n, p, img, q in resolved]
-        return {"order": row_to_order(order_row, item_list)}
+
+            next_id = cur.fetchone()["next_id"]
+
+            order_number = f"ORD-{8842 + next_id}"
+
+            now = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+        # -------------------------------------------------
+        # Insert order
+        # -------------------------------------------------
+            cur.execute(
+                """
+                INSERT INTO orders
+                (
+                    id,
+                    order_number,
+                    user_id,
+                    customer_name,
+                    customer_email,
+                    address,
+                    city,
+                    status,
+                    total,
+                    created_at
+                )
+                VALUES
+                (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);
+                """,
+                (next_id,order_number,user["id"],name,email,address,city,"pending",total,now,),
+            )
+
+            order_id = next_id
+
+        # -------------------------------------------------
+        # Insert order items + decrease stock
+        # -------------------------------------------------
+            for pid, pname, price, image, qty in resolved:
+
+                cur.execute(
+                    """
+                    INSERT INTO order_items
+                    ( order_id,product_id,name,price,image,qty)
+                    VALUES (%s,%s,%s,%s,%s,%s);
+                    """,
+                    (order_id,pid,pname,price,image,qty),
+                )
+
+                cur.execute(
+                    """
+                    UPDATE products
+                    SET stock = stock - %s
+                    WHERE id = %s;
+                    """,
+                    (qty, pid),
+                )
+
+        # -------------------------------------------------
+        # Refresh category counts
+        # -------------------------------------------------
+            self.refresh_category_counts(conn)
+
+        # -------------------------------------------------
+        # Get completed order
+        # -------------------------------------------------
+            cur.execute(
+                "SELECT * FROM orders WHERE id=%s;",
+                (order_id,)
+            )
+
+            order_row = cur.fetchone()
+
+        item_list = [
+            {
+            "id": pid,
+            "name": name,
+            "price": price,
+            "image": image,
+            "qty": qty
+            }
+            for pid, name, price, image, qty in resolved
+        ]
+
+        return {
+            "order": row_to_order(
+                order_row,
+                item_list
+            )
+        }
 
     def _validate_product_payload(self, conn, body, existing=None):
         name = (body.get("name") if "name" in body else (existing["name"] if existing else "")) or ""
@@ -363,53 +503,62 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "Price cannot be negative.")
         if stock < 0:
             raise ApiError(400, "Stock cannot be negative.")
-        category_row = conn.execute("SELECT id FROM categories WHERE name=?", (category,)).fetchone()
-        if not category_row:
-            raise ApiError(400, "Selected category does not exist.")
-        if not sku:
-            raise ApiError(400, "SKU is required.")
-        duplicate = conn.execute("SELECT id FROM products WHERE sku=? AND id!=?", (sku, existing["id"] if existing else -1)).fetchone()
-        if duplicate:
-            raise ApiError(409, "A product with that SKU already exists.")
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM categories WHERE name=%s;", (category,))
+            if not cur.fetchone():
+                raise ApiError(400, "Selected category does not exist.")
+            if not sku:
+                raise ApiError(400, "SKU is required.")
+            cur.execute("SELECT id FROM products WHERE sku=%s AND id!=%s;", (sku, existing["id"] if existing else -1))
+            if cur.fetchone():
+                raise ApiError(409, "A product with that SKU already exists.")
+
         return name, category, price, image, stock, sku
 
     def refresh_category_counts(self, conn):
-        conn.execute("UPDATE categories SET item_count=(SELECT COUNT(*) FROM products WHERE products.category=categories.name)")
+        with conn.cursor() as cur:
+            cur.execute("UPDATE categories SET item_count=(SELECT COUNT(*) FROM products WHERE products.category=categories.name);")
 
     def api_create_product(self, conn):
         body = self.read_json_body()
         name, category, price, image, stock, sku = self._validate_product_payload(conn, body)
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO products (name, category, price, image, stock, sku) VALUES (?,?,?,?,?,?)",
-            (name, category, price, image, stock, sku),
-        )
-        self.refresh_category_counts(conn)
-        row = conn.execute("SELECT * FROM products WHERE id=?", (cur.lastrowid,)).fetchone()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO products (name, category, price, image, stock, sku) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id;",
+                (name, category, price, image, stock, sku),
+            )
+            new_id = cur.fetchone()["id"]
+            self.refresh_category_counts(conn)
+            cur.execute("SELECT * FROM products WHERE id=%s;", (new_id,))
+            row = cur.fetchone()
         return {"product": row_to_product(row)}
 
     def api_update_product(self, conn, product_id):
-        row = conn.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
-        if not row:
-            raise ApiError(404, "Product not found.")
-        body = self.read_json_body()
-        name, category, price, image, stock, sku = self._validate_product_payload(conn, body, row)
-        conn.execute(
-            "UPDATE products SET name=?, category=?, price=?, image=?, stock=?, sku=? WHERE id=?",
-            (name, category, price, image, stock, sku, product_id),
-        )
-        self.refresh_category_counts(conn)
-        updated = conn.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM products WHERE id=%s;", (product_id,))
+            row = cur.fetchone()
+            if not row:
+                raise ApiError(404, "Product not found.")
+            body = self.read_json_body()
+            name, category, price, image, stock, sku = self._validate_product_payload(conn, body, row)
+            cur.execute(
+                "UPDATE products SET name=%s, category=%s, price=%s, image=%s, stock=%s, sku=%s WHERE id=%s;",
+                (name, category, price, image, stock, sku, product_id),
+            )
+            self.refresh_category_counts(conn)
+            cur.execute("SELECT * FROM products WHERE id=%s;", (product_id,))
+            updated = cur.fetchone()
         return {"product": row_to_product(updated)}
 
     def api_delete_product(self, conn, product_id):
-        row = conn.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
-        if not row:
-            raise ApiError(404, "Product not found.")
-        # Preserve historical order items while removing the live catalog product.
-        conn.execute("UPDATE order_items SET product_id=NULL WHERE product_id=?", (product_id,))
-        conn.execute("DELETE FROM products WHERE id=?", (product_id,))
-        self.refresh_category_counts(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM products WHERE id=%s;", (product_id,))
+            if not cur.fetchone():
+                raise ApiError(404, "Product not found.")
+            cur.execute("UPDATE order_items SET product_id=NULL WHERE product_id=%s;", (product_id,))
+            cur.execute("DELETE FROM products WHERE id=%s;", (product_id,))
+            self.refresh_category_counts(conn)
         return {"deleted": product_id}
 
     def _slugify(self, value):
@@ -425,44 +574,56 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "Category name is required.")
         if not slug:
             raise ApiError(400, "Category slug is required.")
-        if conn.execute("SELECT id FROM categories WHERE name=?", (name,)).fetchone():
-            raise ApiError(409, "A category with that name already exists.")
-        if conn.execute("SELECT id FROM categories WHERE slug=?", (slug,)).fetchone():
-            raise ApiError(409, "A category with that slug already exists.")
-        cur = conn.cursor()
-        cur.execute("INSERT INTO categories (name, slug, image, item_count) VALUES (?,?,?,0)", (name, slug, image, 0))
-        row = conn.execute("SELECT * FROM categories WHERE id=?", (cur.lastrowid,)).fetchone()
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM categories WHERE name=%s;", (name,))
+            if cur.fetchone():
+                raise ApiError(409, "A category with that name already exists.")
+            cur.execute("SELECT id FROM categories WHERE slug=%s;", (slug,))
+            if cur.fetchone():
+                raise ApiError(409, "A category with that slug already exists.")
+            cur.execute("INSERT INTO categories (name, slug, image, item_count) VALUES (%s,%s,%s,0) RETURNING id;", (name, slug, image))
+            new_id = cur.fetchone()["id"]
+            cur.execute("SELECT * FROM categories WHERE id=%s;", (new_id,))
+            row = cur.fetchone()
         return {"category": row_to_category(row)}
 
     def api_update_category(self, conn, category_id):
-        row = conn.execute("SELECT * FROM categories WHERE id=?", (category_id,)).fetchone()
-        if not row:
-            raise ApiError(404, "Category not found.")
-        body = self.read_json_body()
-        name = str(body.get("name") if "name" in body else row["name"] or "").strip()
-        slug = str(body.get("slug") if "slug" in body else row["slug"] or "").strip().lower()
-        image = str(body.get("image") if "image" in body else row["image"] or "").strip()
-        if not name or not slug:
-            raise ApiError(400, "Category name and slug are required.")
-        if conn.execute("SELECT id FROM categories WHERE name=? AND id!=?", (name, category_id)).fetchone():
-            raise ApiError(409, "A category with that name already exists.")
-        if conn.execute("SELECT id FROM categories WHERE slug=? AND id!=?", (slug, category_id)).fetchone():
-            raise ApiError(409, "A category with that slug already exists.")
-        conn.execute("UPDATE categories SET name=?, slug=?, image=? WHERE id=?", (name, slug, image, category_id))
-        # Products store category by name, so move existing products with the renamed category.
-        conn.execute("UPDATE products SET category=? WHERE category=?", (name, row["name"]))
-        self.refresh_category_counts(conn)
-        updated = conn.execute("SELECT * FROM categories WHERE id=?", (category_id,)).fetchone()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM categories WHERE id=%s;", (category_id,))
+            row = cur.fetchone()
+            if not row:
+                raise ApiError(404, "Category not found.")
+            body = self.read_json_body()
+            name = str(body.get("name") if "name" in body else row["name"] or "").strip()
+            slug = str(body.get("slug") if "slug" in body else row["slug"] or "").strip().lower()
+            image = str(body.get("image") if "image" in body else row["image"] or "").strip()
+            if not name or not slug:
+                raise ApiError(400, "Category name and slug are required.")
+            cur.execute("SELECT id FROM categories WHERE name=%s AND id!=%s;", (name, category_id))
+            if cur.fetchone():
+                raise ApiError(409, "A category with that name already exists.")
+            cur.execute("SELECT id FROM categories WHERE slug=%s AND id!=%s;", (slug, category_id))
+            if cur.fetchone():
+                raise ApiError(409, "A category with that slug already exists.")
+            cur.execute("UPDATE categories SET name=%s, slug=%s, image=%s WHERE id=%s;", (name, slug, image, category_id))
+            cur.execute("UPDATE products SET category=%s WHERE category=%s;", (name, row["name"]))
+            self.refresh_category_counts(conn)
+            cur.execute("SELECT * FROM categories WHERE id=%s;", (category_id,))
+            updated = cur.fetchone()
         return {"category": row_to_category(updated)}
 
     def api_delete_category(self, conn, category_id):
-        row = conn.execute("SELECT * FROM categories WHERE id=?", (category_id,)).fetchone()
-        if not row:
-            raise ApiError(404, "Category not found.")
-        product_count = conn.execute("SELECT COUNT(*) AS n FROM products WHERE category=?", (row["name"],)).fetchone()["n"]
-        if product_count:
-            raise ApiError(409, "Cannot delete a category while products are assigned to it. Move or delete those products first.")
-        conn.execute("DELETE FROM categories WHERE id=?", (category_id,))
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM categories WHERE id=%s;", (category_id,))
+            row = cur.fetchone()
+            if not row:
+                raise ApiError(404, "Category not found.")
+            cur.execute("SELECT COUNT(*) AS n FROM products WHERE category=%s;", (row["name"],))
+            product_count = cur.fetchone()["n"]
+            if product_count:
+                raise ApiError(409, "Cannot delete a category while products are assigned to it. Move or delete those products first.")
+            cur.execute("DELETE FROM categories WHERE id=%s;", (category_id,))
         return {"deleted": category_id}
 
     def api_set_order_status(self, conn, order_number):
@@ -471,20 +632,26 @@ class Handler(BaseHTTPRequestHandler):
         valid = {"pending", "packed", "shipped", "delivered", "cancelled"}
         if status not in valid:
             raise ApiError(400, f"Status must be one of: {', '.join(sorted(valid))}")
-        row = conn.execute("SELECT * FROM orders WHERE order_number=?", (order_number,)).fetchone()
-        if not row:
-            raise ApiError(404, "Order not found.")
-        conn.execute("UPDATE orders SET status=? WHERE order_number=?", (status, order_number))
-        updated = conn.execute("SELECT * FROM orders WHERE order_number=?", (order_number,)).fetchone()
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM orders WHERE order_number=%s;", (order_number,))
+            if not cur.fetchone():
+                raise ApiError(404, "Order not found.")
+            cur.execute("UPDATE orders SET status=%s WHERE order_number=%s;", (status, order_number))
+            cur.execute("SELECT * FROM orders WHERE order_number=%s;", (order_number,))
+            updated = cur.fetchone()
         return {"order": row_to_order(updated)}
 
     def api_toggle_user(self, conn, user_id):
-        row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-        if not row:
-            raise ApiError(404, "User not found.")
-        new_val = 0 if row["disabled"] else 1
-        conn.execute("UPDATE users SET disabled=? WHERE id=?", (new_val, user_id))
-        updated = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE id=%s;", (user_id,))
+            row = cur.fetchone()
+            if not row:
+                raise ApiError(404, "User not found.")
+            new_val = 0 if row["disabled"] else 1
+            cur.execute("UPDATE users SET disabled=%s WHERE id=%s;", (new_val, user_id))
+            cur.execute("SELECT * FROM users WHERE id=%s;", (user_id,))
+            updated = cur.fetchone()
         return {"user": row_to_user(updated)}
 
     # ---------- static files ----------
@@ -498,7 +665,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if not os.path.isfile(file_path):
-            file_path = os.path.join(FRONTEND_DIR, "index.html")  # SPA fallback for client-side routes
+            file_path = os.path.join(FRONTEND_DIR, "index.html")
         with open(file_path, "rb") as f:
             data = f.read()
         ext = os.path.splitext(file_path)[1].lower()
