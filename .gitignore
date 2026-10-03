@@ -85,3 +85,7 @@ Thumbs.db
 *.log
 # Kubernetes secrets
 kubernetes/secret.yaml
+
+# Local AWS IAM setup files
+github-actions-trust-policy.json
+github-actions-eks-describe-policy.json
