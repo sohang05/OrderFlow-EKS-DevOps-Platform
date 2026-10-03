@@ -142,6 +142,15 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
 
+         # Kubernetes health check
+        if method == "GET" and path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"OK")
+            return
+
         if not path.startswith("/api/"):
             if method == "GET":
                 self.serve_static(path)

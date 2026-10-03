@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orderflow-config
+  namespace: orderflow
+data:
+  DB_HOST: "orderflow-dev-postgres.cylkseqewm6s.us-east-1.rds.amazonaws.com"
+  DB_PORT: "5432"
+  DB_NAME: "orderflow"

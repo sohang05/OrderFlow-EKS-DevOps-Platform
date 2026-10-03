@@ -49,3 +49,23 @@ output "eks_cluster_endpoint" {
 output "eks_cluster_arn" {
   value = module.eks.cluster_arn
 }
+
+output "db_endpoint" {
+  description = "RDS PostgreSQL endpoint"
+  value       = module.rds.db_endpoint
+}
+
+output "db_port" {
+  description = "RDS PostgreSQL port"
+  value       = module.rds.db_port
+}
+
+output "db_name" {
+  description = "RDS PostgreSQL database name"
+  value       = module.rds.db_name
+}
+
+output "db_security_group_id" {
+  description = "RDS security group ID"
+  value       = module.rds.db_security_group_id
+}

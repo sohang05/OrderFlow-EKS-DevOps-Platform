@@ -32,3 +32,8 @@ variable "db_instance_class" {
   type    = string
   default = "db.t4g.micro"
 }
+
+variable "eks_security_group_id" {
+  type        = string
+  description = "Security group ID allowed to connect to RDS PostgreSQL"
+}

@@ -50,7 +50,7 @@ resource "aws_db_instance" "this" {
 
   multi_az = false
 
-  backup_retention_period = 7
+  backup_retention_period = 1
 
   skip_final_snapshot = true
 
@@ -62,4 +62,15 @@ resource "aws_db_instance" "this" {
     Environment = var.environment
     ManagedBy   = "Terraform"
   }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "postgresql_from_eks" {
+  security_group_id            = aws_security_group.this.id
+  referenced_security_group_id = var.eks_security_group_id
+
+  from_port = 5432
+  to_port   = 5432
+  ip_protocol = "tcp"
+
+  description = "Allow PostgreSQL access from EKS"
 }
