@@ -130,3 +130,11 @@ jobs:
           kubectl -n ${{ env.K8S_NAMESPACE }} rollout status \
             deployment/orderflow-frontend \
             --timeout=5m
+
+      # --------------------------------------------------
+      # 14. Verify application health
+      # --------------------------------------------------
+      - name: Verify application health
+        run: |
+          curl --fail --silent --show-error \
+            http://a3ff95ca141d7407a8f885855b77af65-609656012.us-east-1.elb.amazonaws.com/health
