@@ -106,7 +106,6 @@ jobs:
             --namespace ${{ env.K8S_NAMESPACE }} \
             --set backend.image.tag=${{ env.IMAGE_TAG }} \
             --set frontend.image.tag=${{ env.IMAGE_TAG }} \
-            --take-ownership \
             --wait \
             --timeout 5m
 
