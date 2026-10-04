@@ -40,56 +40,9 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::556988669532:role/OrderFlow-GitHubActions-Role
           aws-region: ${{ env.AWS_REGION }}
-
+      
       # --------------------------------------------------
-      # 3. Login to Amazon ECR
-      # --------------------------------------------------
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
-
-      # --------------------------------------------------
-      # 4. Set image tag
-      # --------------------------------------------------
-      - name: Set image tag
-        run: |
-          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
-
-      # --------------------------------------------------
-      # 5. Build backend Docker image
-      # --------------------------------------------------
-      - name: Build backend image
-        run: |
-          docker build \
-            -t ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND }}:${{ env.IMAGE_TAG }} \
-            ./application/backend
-
-      # --------------------------------------------------
-      # 6. Build frontend Docker image
-      # --------------------------------------------------
-      - name: Build frontend image
-        run: |
-          docker build \
-            -t ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND }}:${{ env.IMAGE_TAG }} \
-            ./application/frontend
-
-      # --------------------------------------------------
-      # 7. Push backend image to ECR
-      # --------------------------------------------------
-      - name: Push backend image
-        run: |
-          docker push \
-            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND }}:${{ env.IMAGE_TAG }}
-
-      # --------------------------------------------------
-      # 8. Push frontend image to ECR
-      # --------------------------------------------------
-      - name: Push frontend image
-        run: |
-          docker push \
-            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND }}:${{ env.IMAGE_TAG }}
-
-      # --------------------------------------------------
-      # 9. Configure kubectl for EKS
+      # 3. Configure kubectl for EKS
       # --------------------------------------------------
       - name: Configure kubectl
         run: |
@@ -98,23 +51,68 @@ jobs:
             --region ${{ env.AWS_REGION }}
 
       # --------------------------------------------------
-      # 10. Update backend deployment
+      # 4. Login to Amazon ECR
       # --------------------------------------------------
-      - name: Deploy backend
-        run: |
-          kubectl -n ${{ env.K8S_NAMESPACE }} set image deployment/orderflow-backend \
-            backend=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND }}:${{ env.IMAGE_TAG }}
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
 
       # --------------------------------------------------
-      # 11. Update frontend deployment
+      # 5. Set image tag
       # --------------------------------------------------
-      - name: Deploy frontend
+      - name: Set image tag
         run: |
-          kubectl -n ${{ env.K8S_NAMESPACE }} set image deployment/orderflow-frontend \
-            frontend=${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND }}:${{ env.IMAGE_TAG }}
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
 
       # --------------------------------------------------
-      # 12. Verify backend rollout
+      # 6. Build backend Docker image
+      # --------------------------------------------------
+      - name: Build backend image
+        run: |
+          docker build \
+            -t ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND }}:${{ env.IMAGE_TAG }} \
+            ./application/backend
+
+      # --------------------------------------------------
+      # 7. Build frontend Docker image
+      # --------------------------------------------------
+      - name: Build frontend image
+        run: |
+          docker build \
+            -t ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND }}:${{ env.IMAGE_TAG }} \
+            ./application/frontend
+
+      # --------------------------------------------------
+      # 8. Push backend image to ECR
+      # --------------------------------------------------
+      - name: Push backend image
+        run: |
+          docker push \
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND }}:${{ env.IMAGE_TAG }}
+
+      # --------------------------------------------------
+      # 9. Push frontend image to ECR
+      # --------------------------------------------------
+      - name: Push frontend image
+        run: |
+          docker push \
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND }}:${{ env.IMAGE_TAG }}
+
+      # --------------------------------------------------
+      # 10. Deploy using Helm
+      # --------------------------------------------------
+      - name: Deploy with Helm
+        run: |
+          helm upgrade orderflow ./helm/orderflow \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --set backend.image.tag=${{ env.IMAGE_TAG }} \
+            --set frontend.image.tag=${{ env.IMAGE_TAG }} \
+            --take-ownership \
+            --force-conflicts \
+            --wait \
+            --timeout 5m
+
+      # --------------------------------------------------
+      # 11. Verify backend rollout
       # --------------------------------------------------
       - name: Verify backend rollout
         run: |
@@ -123,7 +121,7 @@ jobs:
             --timeout=5m
 
       # --------------------------------------------------
-      # 13. Verify frontend rollout
+      # 12. Verify frontend rollout
       # --------------------------------------------------
       - name: Verify frontend rollout
         run: |
@@ -132,9 +130,9 @@ jobs:
             --timeout=5m
 
       # --------------------------------------------------
-      # 14. Verify application health
+      # 13. Verify application health
       # --------------------------------------------------
       - name: Verify application health
         run: |
           curl --fail --silent --show-error \
-            http://a3ff95ca141d7407a8f885855b77af65-609656012.us-east-1.elb.amazonaws.com/health
+            http://k8s-orderflo-orderflo-42732ec871-946129262.us-east-1.elb.amazonaws.com/health
