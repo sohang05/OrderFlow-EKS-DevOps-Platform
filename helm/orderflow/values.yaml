@@ -1,0 +1,82 @@
+# ============================================================
+# OrderFlow Helm Values
+# ============================================================
+
+# ------------------------------------------------------------
+# Application
+# ------------------------------------------------------------
+
+namespace: orderflow
+
+
+# ------------------------------------------------------------
+# Backend
+# ------------------------------------------------------------
+
+backend:
+  replicaCount: 2
+
+  image:
+    repository: 556988669532.dkr.ecr.us-east-1.amazonaws.com/orderflow-backend
+    tag: v2
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+
+# ------------------------------------------------------------
+# Frontend
+# ------------------------------------------------------------
+
+frontend:
+  replicaCount: 2
+
+  image:
+    repository: 556988669532.dkr.ecr.us-east-1.amazonaws.com/orderflow-frontend
+    tag: v2
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
+
+
+# ------------------------------------------------------------
+# Database
+# ------------------------------------------------------------
+
+database:
+  host: orderflow-dev-postgres.cylkseqewm6s.us-east-1.rds.amazonaws.com
+  port: "5432"
+  name: orderflow
+  existingSecret: orderflow-db-secret 
+
+# ------------------------------------------------------------
+# Autoscaling
+# ------------------------------------------------------------
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 60

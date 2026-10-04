@@ -89,3 +89,7 @@ kubernetes/secret.yaml
 # Local AWS IAM setup files
 github-actions-trust-policy.json
 github-actions-eks-describe-policy.json
+# AWS Load Balancer Controller / CloudWatch IAM setup artifacts
+aws-load-balancer-controller-trust-policy.json
+iam_policy.json
+cloudwatch-trust-policy.json
