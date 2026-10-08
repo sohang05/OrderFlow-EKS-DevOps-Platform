@@ -135,7 +135,13 @@ jobs:
       # --------------------------------------------------
       # 13. Verify application health
       # --------------------------------------------------
-      - name: Verify application health
+      - name: Health check
         run: |
+          ALB_HOST=$(kubectl get ingress orderflow-ingress \
+          -n $K8S_NAMESPACE \
+          -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          echo "ALB Host: $ALB_HOST"
+
           curl --fail --silent --show-error \
-            http://k8s-orderflo-orderflo-42732ec871-946129262.us-east-1.elb.amazonaws.com/health
+          "http://$ALB_HOST/health"
