@@ -50,6 +50,11 @@ jobs:
             --name ${{ env.EKS_CLUSTER }} \
             --region ${{ env.AWS_REGION }}
 
+      - name: Verify EKS access
+        run: |
+          aws sts get-caller-identity
+          kubectl get nodes
+      
       # --------------------------------------------------
       # 4. Login to Amazon ECR
       # --------------------------------------------------
