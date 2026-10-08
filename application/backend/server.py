@@ -343,7 +343,7 @@ class Handler(BaseHTTPRequestHandler):
             INSERT INTO orders (order_number, user_id, customer_name, customer_email, address, city, status, total, created_at)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id
-            """
+            """,
             (order_number, user["id"], name, email, address, city, "pending", total, now),
         )
         order_id = cur.fetchone()["id"]
