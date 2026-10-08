@@ -339,11 +339,14 @@ class Handler(BaseHTTPRequestHandler):
         order_number = f"ORD-{8842 + seq_row['n']}"
         now = time.strftime("%Y-%m-%dT%H:%M:%S")
         cur.execute(
-            "INSERT INTO orders (order_number, user_id, customer_name, customer_email, address, city, status, total, created_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            """
+            INSERT INTO orders (order_number, user_id, customer_name, customer_email, address, city, status, total, created_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING id
+            """
             (order_number, user["id"], name, email, address, city, "pending", total, now),
         )
-        order_id = cur.lastrowid
+        order_id = cur.fetchone()["id"]
         for pid, pname, price, image, qty in resolved:
             cur.execute(
                 "INSERT INTO order_items (order_id, product_id, name, price, image, qty) VALUES (%s,%s,%s,%s,%s,%s)",
