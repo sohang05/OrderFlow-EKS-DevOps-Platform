@@ -1,1 +1,2 @@
 PyJWT==2.7.0
+psycopg[binary]==3.2.3

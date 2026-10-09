@@ -1,0 +1,147 @@
+name: OrderFlow CI/CD
+
+on:
+  push:
+    branches:
+      - feature/terraform-infra
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "556988669532"
+
+  ECR_BACKEND: orderflow-backend
+  ECR_FRONTEND: orderflow-frontend
+
+  EKS_CLUSTER: orderflow-dev
+  K8S_NAMESPACE: orderflow
+
+jobs:
+  build-and-deploy:
+    name: Build, Push and Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # --------------------------------------------------
+      # 1. Checkout source code
+      # --------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------
+      # 2. Authenticate to AWS using GitHub OIDC
+      # --------------------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::556988669532:role/OrderFlow-GitHubActions-Role
+          aws-region: ${{ env.AWS_REGION }}
+      
+      # --------------------------------------------------
+      # 3. Configure kubectl for EKS
+      # --------------------------------------------------
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ env.EKS_CLUSTER }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Verify EKS access
+        run: |
+          aws sts get-caller-identity
+          kubectl get nodes
+      
+      # --------------------------------------------------
+      # 4. Login to Amazon ECR
+      # --------------------------------------------------
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # --------------------------------------------------
+      # 5. Set image tag
+      # --------------------------------------------------
+      - name: Set image tag
+        run: |
+          echo "IMAGE_TAG=${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------
+      # 6. Build backend Docker image
+      # --------------------------------------------------
+      - name: Build backend image
+        run: |
+          docker build \
+            -t ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND }}:${{ env.IMAGE_TAG }} \
+            ./application/backend
+
+      # --------------------------------------------------
+      # 7. Build frontend Docker image
+      # --------------------------------------------------
+      - name: Build frontend image
+        run: |
+          docker build \
+            -t ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND }}:${{ env.IMAGE_TAG }} \
+            ./application/frontend
+
+      # --------------------------------------------------
+      # 8. Push backend image to ECR
+      # --------------------------------------------------
+      - name: Push backend image
+        run: |
+          docker push \
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND }}:${{ env.IMAGE_TAG }}
+
+      # --------------------------------------------------
+      # 9. Push frontend image to ECR
+      # --------------------------------------------------
+      - name: Push frontend image
+        run: |
+          docker push \
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND }}:${{ env.IMAGE_TAG }}
+
+      # --------------------------------------------------
+      # 10. Deploy using Helm
+      # --------------------------------------------------
+      - name: Deploy with Helm
+        run: |
+          helm upgrade orderflow ./helm/orderflow \
+            --namespace ${{ env.K8S_NAMESPACE }} \
+            --set backend.image.tag=${{ env.IMAGE_TAG }} \
+            --set frontend.image.tag=${{ env.IMAGE_TAG }} \
+            --wait \
+            --timeout 5m
+
+      # --------------------------------------------------
+      # 11. Verify backend rollout
+      # --------------------------------------------------
+      - name: Verify backend rollout
+        run: |
+          kubectl -n ${{ env.K8S_NAMESPACE }} rollout status \
+            deployment/orderflow-backend \
+            --timeout=5m
+
+      # --------------------------------------------------
+      # 12. Verify frontend rollout
+      # --------------------------------------------------
+      - name: Verify frontend rollout
+        run: |
+          kubectl -n ${{ env.K8S_NAMESPACE }} rollout status \
+            deployment/orderflow-frontend \
+            --timeout=5m
+
+      # --------------------------------------------------
+      # 13. Verify application health
+      # --------------------------------------------------
+      - name: Health check
+        run: |
+          ALB_HOST=$(kubectl get ingress orderflow-ingress \
+          -n $K8S_NAMESPACE \
+          -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          echo "ALB Host: $ALB_HOST"
+
+          curl --fail --silent --show-error \
+          "http://$ALB_HOST/health"
