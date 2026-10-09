@@ -216,7 +216,8 @@ class Handler(BaseHTTPRequestHandler):
             if order["user_id"] != user["id"] and user["role"] != "admin":
                 raise ApiError(403, "You don't have access to this order.")
             items = conn.execute("SELECT * FROM order_items WHERE order_id=%s", (order["id"],)).fetchall()
-            item_list = [{"id": i["product_id"], "name": i["name"], "price": i["price"], "image": i["image"], "qty": i["qty"]} for i in items]
+            item_list = [{"id": i["product_id"], "name": i["name"], "price": float(i["price"]) if i["price"] is not None else None,
+                        "image": i["image"], "qty": i["qty"]} for i in items]
             return {"order": row_to_order(order, item_list)}
 
         # ----- admin product/category management -----
