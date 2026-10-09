@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orderflow-frontend
+  namespace: orderflow
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: orderflow-frontend
+
+  template:
+    metadata:
+      labels:
+        app: orderflow-frontend
+
+    spec:
+      containers:
+        - name: frontend
+          image: 556988669532.dkr.ecr.us-east-1.amazonaws.com/orderflow-frontend:v2
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 80
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 20
